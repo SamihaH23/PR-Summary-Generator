@@ -22,7 +22,7 @@ export function parseGitDiff(rawDiff: string): ParsedDiff {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Detect diff header
+    // Detect diff header: diff --git a/path b/path
     if (line.startsWith('diff --git')) {
       if (currentChunk && currentFile) {
         currentFile.chunks.push(currentChunk);
@@ -49,7 +49,6 @@ export function parseGitDiff(rawDiff: string): ParsedDiff {
     }
 
     if (!currentFile) {
-      // If diff doesn't start with diff --git, initialize a default file block
       if (line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('@@ ')) {
         currentFile = {
           oldPath: 'file',
@@ -63,6 +62,35 @@ export function parseGitDiff(rawDiff: string): ParsedDiff {
       } else {
         continue;
       }
+    }
+
+    // Binary file detection
+    if (line.startsWith('Binary files ') && line.includes(' differ')) {
+      currentFile.status = 'binary';
+      currentFile.isBinary = true;
+      continue;
+    }
+
+    // Rename detection
+    if (line.startsWith('rename from ')) {
+      currentFile.oldPath = line.replace('rename from ', '').trim();
+      currentFile.status = 'renamed';
+      continue;
+    }
+    if (line.startsWith('rename to ')) {
+      currentFile.newPath = line.replace('rename to ', '').trim();
+      currentFile.language = getLanguageFromFilename(currentFile.newPath);
+      continue;
+    }
+
+    // New / deleted file mode
+    if (line.startsWith('new file mode ')) {
+      currentFile.status = 'added';
+      continue;
+    }
+    if (line.startsWith('deleted file mode ')) {
+      currentFile.status = 'deleted';
+      continue;
     }
 
     if (line.startsWith('--- ')) {

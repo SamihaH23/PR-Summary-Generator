@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Sparkles, AlertCircle, Link as LinkIcon, Code2 } from 'lucide-react';
+import { Upload, Sparkles, AlertCircle, Link as LinkIcon, Code2, Command } from 'lucide-react';
 
 interface DiffInputProps {
   rawDiff: string;
@@ -7,6 +7,7 @@ interface DiffInputProps {
   onAnalyze: () => void;
   isAnalyzing: boolean;
   fileStats?: { totalFiles: number; totalAdditions: number; totalDeletions: number };
+  githubToken?: string;
 }
 
 export const DiffInput: React.FC<DiffInputProps> = ({
@@ -14,7 +15,8 @@ export const DiffInput: React.FC<DiffInputProps> = ({
   onDiffChange,
   onAnalyze,
   isAnalyzing,
-  fileStats
+  fileStats,
+  githubToken
 }) => {
   const [activeTab, setActiveTab] = useState<'paste' | 'upload' | 'url'>('paste');
   const [prUrl, setPrUrl] = useState('');
@@ -36,23 +38,53 @@ export const DiffInput: React.FC<DiffInputProps> = ({
     reader.readAsText(file);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (rawDiff.trim() && !isAnalyzing) {
+        onAnalyze();
+      }
+    }
+  };
+
   const handleFetchPR = async () => {
     if (!prUrl.trim()) return;
     setUrlError('');
     setUrlLoading(true);
 
     try {
-      // Parse github PR URL: https://github.com/owner/repo/pull/123 -> convert to .diff URL
+      // Parse GitHub URL: https://github.com/owner/repo/pull/123
+      const match = prUrl.trim().match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
       let fetchUrl = prUrl.trim();
-      if (fetchUrl.includes('github.com') && !fetchUrl.endsWith('.diff')) {
+      const headers: Record<string, string> = {
+        'Accept': 'application/vnd.github.v3.diff'
+      };
+
+      if (githubToken && githubToken.trim()) {
+        headers['Authorization'] = `token ${githubToken.trim()}`;
+      }
+
+      if (match) {
+        const [, owner, repo, pullNumber] = match;
+        fetchUrl = `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}`;
+      } else if (!fetchUrl.endsWith('.diff')) {
         fetchUrl = fetchUrl.replace(/\/$/, '') + '.diff';
       }
 
-      const res = await fetch(fetchUrl);
+      const res = await fetch(fetchUrl, { headers });
       if (!res.ok) {
-        throw new Error(`Failed to fetch PR diff (${res.status} ${res.statusText}). Note: CORS may restrict direct browser fetches from public GitHub repos. You can copy the diff content or use sample diffs.`);
+        if (res.status === 403) {
+          throw new Error('GitHub API rate limit exceeded or access forbidden. Add a Personal Access Token in API Settings.');
+        } else if (res.status === 404) {
+          throw new Error('PR not found. Ensure the repository and PR number exist and are accessible.');
+        } else {
+          throw new Error(`Failed to fetch PR (${res.status} ${res.statusText}).`);
+        }
       }
       const text = await res.text();
+      if (!text || !text.trim()) {
+        throw new Error('Retrieved empty diff content from GitHub PR.');
+      }
       onDiffChange(text);
       setActiveTab('paste');
     } catch (err: any) {
@@ -68,26 +100,26 @@ export const DiffInput: React.FC<DiffInputProps> = ({
     <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
       
       {/* Header Tabs */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
           <button
             onClick={() => setActiveTab('paste')}
-            className={`btn ${activeTab === 'paste' ? 'btn-secondary' : 'btn-outline'}`}
-            style={{ padding: '6px 12px', fontSize: '0.82rem', borderColor: activeTab === 'paste' ? 'var(--accent-primary)' : 'transparent' }}
+            className={`btn btn-sm ${activeTab === 'paste' ? 'btn-secondary' : 'btn-outline'}`}
+            style={{ borderColor: activeTab === 'paste' ? 'var(--accent-primary)' : 'transparent' }}
           >
-            <Code2 size={14} /> Paste Raw Diff
+            <Code2 size={14} /> Paste Diff
           </button>
           <button
             onClick={() => setActiveTab('upload')}
-            className={`btn ${activeTab === 'upload' ? 'btn-secondary' : 'btn-outline'}`}
-            style={{ padding: '6px 12px', fontSize: '0.82rem', borderColor: activeTab === 'upload' ? 'var(--accent-primary)' : 'transparent' }}
+            className={`btn btn-sm ${activeTab === 'upload' ? 'btn-secondary' : 'btn-outline'}`}
+            style={{ borderColor: activeTab === 'upload' ? 'var(--accent-primary)' : 'transparent' }}
           >
             <Upload size={14} /> Upload File (.diff)
           </button>
           <button
             onClick={() => setActiveTab('url')}
-            className={`btn ${activeTab === 'url' ? 'btn-secondary' : 'btn-outline'}`}
-            style={{ padding: '6px 12px', fontSize: '0.82rem', borderColor: activeTab === 'url' ? 'var(--accent-primary)' : 'transparent' }}
+            className={`btn btn-sm ${activeTab === 'url' ? 'btn-secondary' : 'btn-outline'}`}
+            style={{ borderColor: activeTab === 'url' ? 'var(--accent-primary)' : 'transparent' }}
           >
             <LinkIcon size={14} /> Fetch GitHub PR
           </button>
@@ -108,7 +140,8 @@ export const DiffInput: React.FC<DiffInputProps> = ({
           <textarea
             value={rawDiff}
             onChange={(e) => onDiffChange(e.target.value)}
-            placeholder="Paste raw `git diff` output or git patch here..."
+            onKeyDown={handleKeyDown}
+            placeholder="Paste raw `git diff` output or git patch here... (Press Cmd+Enter to run AI summary)"
             style={{
               width: '100%',
               minHeight: '260px',
@@ -124,8 +157,21 @@ export const DiffInput: React.FC<DiffInputProps> = ({
               resize: 'vertical'
             }}
           />
-          <div style={{ position: 'absolute', bottom: '12px', right: '14px', fontSize: '0.75rem', color: '#6b7280', pointerEvents: 'none' }}>
-            {lineCount} lines
+          <div style={{
+            position: 'absolute',
+            bottom: '12px',
+            right: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '0.75rem',
+            color: '#6b7280',
+            pointerEvents: 'none'
+          }}>
+            <span className="badge" style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-color)', color: '#9ca3af', textTransform: 'none' }}>
+              <Command size={10} /> + Enter
+            </span>
+            <span>{lineCount} lines</span>
           </div>
         </div>
       )}
@@ -155,14 +201,14 @@ export const DiffInput: React.FC<DiffInputProps> = ({
             Click to upload or drag & drop `.diff` / `.patch` file
           </h3>
           <p style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
-            Supports standard unified diff format
+            Supports standard unified git diff format
           </p>
         </div>
       )}
 
       {activeTab === 'url' && (
-        <div style={{ padding: '16px 0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ padding: '12px 0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <input
               type="text"
               value={prUrl}
@@ -170,6 +216,7 @@ export const DiffInput: React.FC<DiffInputProps> = ({
               placeholder="https://github.com/owner/repo/pull/123"
               style={{
                 flex: 1,
+                minWidth: '220px',
                 padding: '10px 14px',
                 borderRadius: '8px',
                 border: '1px solid var(--border-color)',
@@ -184,7 +231,7 @@ export const DiffInput: React.FC<DiffInputProps> = ({
               disabled={urlLoading || !prUrl.trim()}
               className="btn btn-secondary"
             >
-              {urlLoading ? 'Fetching...' : 'Fetch Diff'}
+              {urlLoading ? 'Fetching...' : 'Fetch PR Diff'}
             </button>
           </div>
           {urlError && (
@@ -199,8 +246,7 @@ export const DiffInput: React.FC<DiffInputProps> = ({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
         <button
           onClick={() => onDiffChange('')}
-          className="btn btn-secondary"
-          style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+          className="btn btn-secondary btn-sm"
           disabled={!rawDiff}
         >
           Clear Input
@@ -210,7 +256,7 @@ export const DiffInput: React.FC<DiffInputProps> = ({
           onClick={onAnalyze}
           disabled={isAnalyzing || !rawDiff.trim()}
           className="btn btn-primary"
-          style={{ padding: '12px 24px', fontSize: '0.95rem', fontWeight: 600 }}
+          style={{ padding: '10px 22px', fontSize: '0.92rem', fontWeight: 600 }}
         >
           <Sparkles size={18} />
           {isAnalyzing ? 'Analyzing Diff...' : 'Generate PR Summary'}
