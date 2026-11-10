@@ -48,7 +48,7 @@ The goal is to reduce the time spent reviewing large pull requests by automatica
 | Styling | CSS Variables (Design Tokens), Glassmorphism UI |
 | Fonts | Inter, JetBrains Mono |
 | Icons | Lucide React |
-| AI | Gemini API (`@google/genai`) |
+| AI | Gemini REST API (`gemini-2.5-flash` / `gemini-2.5-pro`), offline heuristic fallback |
 | Diff Parsing | Custom high-performance Git diff parser |
 
 ---
@@ -81,14 +81,13 @@ Git Diff / Pull Request
 ```
 src/
 │
-├── components/
-├── hooks/
-├── lib/
-│   ├── diffParser.ts
-│   └── gemini.ts
-├── pages/
+├── components/     # Header, DiffInput, DiffViewer, SummaryOutput, modals
+├── data/           # Sample diffs
+├── styles/
 ├── types/
 ├── utils/
+│   ├── diffParser.ts
+│   └── aiSummarizer.ts   # Gemini calls + offline heuristics
 └── App.tsx
 ```
 
@@ -109,13 +108,10 @@ cd PR-Summary-Generator
 npm install
 ```
 
-### Configure Environment Variables
+### Configure your Gemini API key
 
-Create a `.env` file in the project root.
-
-```env
-VITE_GEMINI_API_KEY=your_api_key_here
-```
+Open the app, click the settings icon in the header, and paste your Gemini API key.
+The key is stored in your browser's localStorage only. Without a key, the app uses a built-in offline analyzer.
 
 ---
 

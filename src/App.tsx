@@ -7,10 +7,10 @@ import { SummaryOutput } from './components/SummaryOutput';
 import { HistoryDrawer } from './components/HistoryDrawer';
 
 import { parseGitDiff } from './utils/diffParser';
-import { generatePRSummary } from './utils/aiSummarizer';
+import { generatePRSummary, splitDiffForAI, MAX_AI_PARTS } from './utils/aiSummarizer';
 import { SAMPLE_DIFFS } from './data/sampleDiffs';
-import { AISettings, ParsedDiff, PRSummary, ToastMessage, ThemeMode, PRHistoryItem } from './types';
-import { Sparkles, Code, AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
+import { AISettings, ParsedDiff, PRSummary, ToastMessage, PRHistoryItem } from './types';
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [selectedSampleId, setSelectedSampleId] = useState<string>('auth-service');
@@ -20,13 +20,7 @@ export const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
-  const [viewTab, setViewTab] = useState<'summary' | 'diff'>('summary');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  // Theme state
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    return (localStorage.getItem('pr_ai_theme') as ThemeMode) || 'cyber-indigo';
-  });
 
   // History state
   const [history, setHistory] = useState<PRHistoryItem[]>(() => {
@@ -54,11 +48,16 @@ export const App: React.FC = () => {
     };
   });
 
-  // Apply theme data attribute to document root
+  // Escape closes whichever overlay is open
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('pr_ai_theme', theme);
-  }, [theme]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setIsSettingsOpen(false);
+      setIsHistoryOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Auto-parse raw diff on change
   useEffect(() => {
@@ -72,7 +71,7 @@ export const App: React.FC = () => {
   }, []);
 
   const addToast = (type: 'error' | 'success' | 'info', message: string) => {
-    const id = `toast-${Date.now()}`;
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setToasts(prev => [...prev, { id, type, message }]);
     setTimeout(() => {
       removeToast(id);
@@ -114,7 +113,7 @@ export const App: React.FC = () => {
     };
 
     setHistory(prev => {
-      const updated = [newItem, ...prev.filter(h => h.title !== res.title)].slice(0, 20);
+      const updated = [newItem, ...prev.filter(h => h.rawDiff !== targetParsed.rawText)].slice(0, 20);
       localStorage.setItem('pr_ai_history', JSON.stringify(updated));
       return updated;
     });
@@ -137,8 +136,8 @@ export const App: React.FC = () => {
 
   const handleRestoreHistory = (item: PRHistoryItem) => {
     setRawDiff(item.rawDiff);
+    setSelectedSampleId('');
     setSummary(item.summary);
-    setViewTab('summary');
     addToast('success', `Restored PR review: "${item.title}"`);
   };
 
@@ -149,11 +148,18 @@ export const App: React.FC = () => {
       return;
     }
 
+    const usingLiveAI = Boolean(settings.apiKey?.trim()) && !settings.useOfflineFallback;
+    const partCount = usingLiveAI ? splitDiffForAI(targetParsed).length : 1;
+    if (partCount > MAX_AI_PARTS) {
+      addToast('info', `Very large diff: only the first ${MAX_AI_PARTS} of ${partCount} parts are sent to the AI.`);
+    } else if (partCount > 1) {
+      addToast('info', `Large diff: analyzing in ${partCount} parts.`);
+    }
+
     setIsAnalyzing(true);
     try {
       const res = await generatePRSummary(targetParsed, settings);
       setSummary(res);
-      setViewTab('summary');
       saveToHistory(res, targetParsed);
     } catch (err: any) {
       console.error('Error generating summary:', err);
@@ -179,8 +185,6 @@ export const App: React.FC = () => {
         selectedSampleId={selectedSampleId}
         historyCount={history.length}
         onOpenHistory={() => setIsHistoryOpen(true)}
-        onThemeChange={(newTheme) => setTheme(newTheme)}
-        currentTheme={theme}
       />
 
       {/* Main Responsive Grid */}
@@ -211,36 +215,14 @@ export const App: React.FC = () => {
 
         {/* Right Column: AI PR Summary Output */}
         <div className="right-column">
-          
-          {/* Navigation View Switcher */}
-          <div className="glass-panel" style={{ padding: '6px', display: 'flex', gap: '6px' }}>
-            <button
-              onClick={() => setViewTab('summary')}
-              className={`btn ${viewTab === 'summary' ? 'btn-primary' : 'btn-outline'}`}
-              style={{ flex: 1, justifyContent: 'center', padding: '8px 14px', fontSize: '0.85rem' }}
-            >
-              <Sparkles size={16} /> AI Summary & Risk
-            </button>
-            <button
-              onClick={() => setViewTab('diff')}
-              className={`btn ${viewTab === 'diff' ? 'btn-primary' : 'btn-outline'}`}
-              style={{ flex: 1, justifyContent: 'center', padding: '8px 14px', fontSize: '0.85rem' }}
-            >
-              <Code size={16} /> Full Diff View
-            </button>
-          </div>
-
-          {viewTab === 'summary' ? (
             <SummaryOutput
+              key={summary ? `${summary.title}-${summary.riskLevel}-${summary.summaryPoints.length}` : 'empty'}
               summary={summary}
               isAnalyzing={isAnalyzing}
               onUpdateSummary={(updated) => setSummary(updated)}
               totalAdditions={parsedDiff.totalAdditions}
               totalDeletions={parsedDiff.totalDeletions}
             />
-          ) : (
-            <DiffViewer parsedDiff={parsedDiff} apiKey={settings.apiKey} />
-          )}
 
         </div>
 
@@ -266,16 +248,17 @@ export const App: React.FC = () => {
 
       {/* Toast Notifications */}
       {toasts.length > 0 && (
-        <div className="toast-container">
+        <div className="toast-container" role="status" aria-live="polite">
           {toasts.map((toast) => (
             <div key={toast.id} className={`toast toast-${toast.type}`}>
-              {toast.type === 'error' && <AlertCircle size={18} color="#f87171" />}
-              {toast.type === 'success' && <CheckCircle2 size={18} color="#34d399" />}
-              {toast.type === 'info' && <Info size={18} color="#60a5fa" />}
+              {toast.type === 'error' && <AlertCircle size={18} color="var(--danger)" />}
+              {toast.type === 'success' && <CheckCircle2 size={18} color="var(--success)" />}
+              {toast.type === 'info' && <Info size={18} color="var(--accent-primary)" />}
               <div style={{ flex: 1 }}>{toast.message}</div>
               <button
                 onClick={() => removeToast(toast.id)}
-                style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: '2px' }}
+                aria-label="Dismiss notification"
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px' }}
               >
                 <X size={14} />
               </button>

@@ -2,7 +2,6 @@ export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
 
 export type TestCategory = 'Unit' | 'Integration' | 'Security' | 'Edge Case' | 'Regression';
 
-export type ThemeMode = 'cyber-indigo' | 'emerald-hacker' | 'sunset-neon' | 'high-contrast';
 
 export type DiffViewMode = 'unified' | 'side-by-side';
 
@@ -74,6 +73,8 @@ export interface PRSummary {
   complexityScore?: 'Small' | 'Medium' | 'Large' | 'Chunky';
   estimatedReviewTime?: string;
   prDescriptionMarkdown: string;
+  /** Where the summary came from: live Gemini call or the offline heuristic engine. */
+  source?: 'ai' | 'offline';
 }
 
 export interface LineAnnotation {
@@ -110,7 +111,6 @@ export interface AISettings {
   apiKey: string;
   githubToken?: string;
   model: string;
-  theme?: ThemeMode;
   customPrompt?: string;
   useOfflineFallback: boolean;
 }

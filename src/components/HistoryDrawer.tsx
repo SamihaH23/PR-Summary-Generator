@@ -29,11 +29,16 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   );
 
   return (
-    <div style={{
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="PR review history"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
       position: 'fixed',
       inset: 0,
       zIndex: 1400,
-      background: 'rgba(0,0,0,0.6)',
+      background: 'rgba(22, 18, 15, 0.45)',
       backdropFilter: 'blur(4px)'
     }}>
       <div className="history-drawer">
@@ -42,11 +47,11 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <History size={18} color="var(--accent-primary)" />
-            <h2 style={{ fontSize: '1.05rem', fontWeight: 600, color: '#f3f4f6' }}>
+            <h2 style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-main)' }}>
               PR Review History ({history.length})
             </h2>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>
+          <button onClick={onClose} aria-label="Close history" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
             <X size={18} />
           </button>
         </div>
@@ -64,20 +69,20 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                 padding: '8px 12px 8px 34px',
                 borderRadius: '6px',
                 border: '1px solid var(--border-color)',
-                background: 'rgba(0,0,0,0.3)',
-                color: '#ffffff',
+                background: 'rgba(var(--inset-rgb), 0.3)',
+                color: 'var(--text-main)',
                 fontSize: '0.82rem',
                 outline: 'none'
               }}
             />
-            <Search size={14} color="#9ca3af" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+            <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
           </div>
         )}
 
         {/* History List */}
         <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {filteredHistory.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 10px', color: '#6b7280', fontSize: '0.85rem' }}>
+            <div style={{ textAlign: 'center', padding: '40px 10px', color: 'var(--text-dim)', fontSize: '0.85rem' }}>
               <History size={32} style={{ opacity: 0.3, marginBottom: '8px' }} />
               <p>No saved PR reviews found</p>
             </div>
@@ -89,7 +94,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                   padding: '12px 14px',
                   borderRadius: '8px',
                   border: '1px solid var(--border-color)',
-                  background: 'rgba(255, 255, 255, 0.02)',
+                  background: 'rgba(var(--fg-rgb), 0.02)',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: '8px',
@@ -102,7 +107,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                       onSelectHistory(item);
                       onClose();
                     }}
-                    style={{ fontSize: '0.88rem', fontWeight: 600, color: '#f3f4f6', cursor: 'pointer', flex: 1 }}
+                    style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)', cursor: 'pointer', flex: 1 }}
                   >
                     {item.title}
                   </h3>
@@ -111,7 +116,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.75rem', color: '#9ca3af' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <Calendar size={12} /> {new Date(item.timestamp).toLocaleDateString()} {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
@@ -121,7 +126,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginTop: '4px' }}>
                   <button
                     onClick={() => onDeleteHistoryItem(item.id)}
-                    style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', padding: '4px' }}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: '4px' }}
                     title="Delete item"
                   >
                     <Trash2 size={13} />
@@ -145,7 +150,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
         {/* Footer Actions */}
         {history.length > 0 && (
           <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px', display: 'flex', justifyContent: 'flex-end' }}>
-            <button onClick={onClearHistory} className="btn btn-secondary btn-sm" style={{ color: '#f87171' }}>
+            <button onClick={onClearHistory} className="btn btn-secondary btn-sm" style={{ color: 'var(--danger)' }}>
               <Trash2 size={12} /> Clear All History
             </button>
           </div>

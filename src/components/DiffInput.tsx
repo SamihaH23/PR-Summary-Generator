@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Sparkles, AlertCircle, Link as LinkIcon, Code2, Command } from 'lucide-react';
+import { Upload, Sparkles, Loader2, AlertCircle, Link as LinkIcon, Code2, Command } from 'lucide-react';
 
 interface DiffInputProps {
   rawDiff: string;
@@ -126,10 +126,10 @@ export const DiffInput: React.FC<DiffInputProps> = ({
         </div>
 
         {fileStats && fileStats.totalFiles > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.8rem', color: '#9ca3af' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
             <span>Files: <strong>{fileStats.totalFiles}</strong></span>
-            <span style={{ color: '#34d399' }}>+{fileStats.totalAdditions}</span>
-            <span style={{ color: '#f87171' }}>-{fileStats.totalDeletions}</span>
+            <span style={{ color: 'var(--success)' }}>+{fileStats.totalAdditions}</span>
+            <span style={{ color: 'var(--danger)' }}>-{fileStats.totalDeletions}</span>
           </div>
         )}
       </div>
@@ -148,8 +148,8 @@ export const DiffInput: React.FC<DiffInputProps> = ({
               padding: '14px',
               borderRadius: '8px',
               border: '1px solid var(--border-color)',
-              background: 'rgba(5, 8, 15, 0.6)',
-              color: '#e5e7eb',
+              background: 'rgba(var(--inset-rgb), 0.6)',
+              color: 'var(--text-main)',
               fontFamily: 'var(--font-mono)',
               fontSize: '0.85rem',
               lineHeight: '1.5',
@@ -165,10 +165,10 @@ export const DiffInput: React.FC<DiffInputProps> = ({
             alignItems: 'center',
             gap: '8px',
             fontSize: '0.75rem',
-            color: '#6b7280',
+            color: 'var(--text-dim)',
             pointerEvents: 'none'
           }}>
-            <span className="badge" style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-color)', color: '#9ca3af', textTransform: 'none' }}>
+            <span className="badge" style={{ background: 'rgba(var(--fg-rgb), 0.05)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', textTransform: 'none' }}>
               <Command size={10} /> + Enter
             </span>
             <span>{lineCount} lines</span>
@@ -185,7 +185,7 @@ export const DiffInput: React.FC<DiffInputProps> = ({
             padding: '40px 20px',
             textAlign: 'center',
             cursor: 'pointer',
-            background: 'rgba(0, 0, 0, 0.2)',
+            background: 'rgba(var(--inset-rgb), 0.2)',
             transition: 'all 0.2s ease'
           }}
         >
@@ -197,10 +197,10 @@ export const DiffInput: React.FC<DiffInputProps> = ({
             style={{ display: 'none' }}
           />
           <Upload size={32} color="var(--accent-primary)" style={{ marginBottom: '12px' }} />
-          <h3 style={{ fontSize: '0.95rem', color: '#f3f4f6', marginBottom: '4px' }}>
+          <h3 style={{ fontSize: '0.95rem', color: 'var(--text-main)', marginBottom: '4px' }}>
             Click to upload or drag & drop `.diff` / `.patch` file
           </h3>
-          <p style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
             Supports standard unified git diff format
           </p>
         </div>
@@ -220,8 +220,8 @@ export const DiffInput: React.FC<DiffInputProps> = ({
                 padding: '10px 14px',
                 borderRadius: '8px',
                 border: '1px solid var(--border-color)',
-                background: 'rgba(0, 0, 0, 0.3)',
-                color: '#ffffff',
+                background: 'rgba(var(--inset-rgb), 0.3)',
+                color: 'var(--text-main)',
                 fontSize: '0.88rem',
                 outline: 'none'
               }}
@@ -235,7 +235,7 @@ export const DiffInput: React.FC<DiffInputProps> = ({
             </button>
           </div>
           {urlError && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#f87171' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--danger)' }}>
               <AlertCircle size={14} /> {urlError}
             </div>
           )}
@@ -258,7 +258,7 @@ export const DiffInput: React.FC<DiffInputProps> = ({
           className="btn btn-primary"
           style={{ padding: '10px 22px', fontSize: '0.92rem', fontWeight: 600 }}
         >
-          <Sparkles size={18} />
+          {isAnalyzing ? <Loader2 size={18} className="spin" /> : <Sparkles size={18} />}
           {isAnalyzing ? 'Analyzing Diff...' : 'Generate PR Summary'}
         </button>
       </div>

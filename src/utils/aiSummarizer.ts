@@ -1,5 +1,17 @@
 import { ParsedDiff, PRSummary, AISettings, RiskLevel, TestCase, RiskBreakdown, CommitSuggestions } from '../types';
 
+export const DEFAULT_MODEL = 'gemini-2.5-flash';
+export const MAX_DIFF_CHARS = 12000;
+/** Cap on how many AI calls one analysis may make for a big diff. */
+export const MAX_AI_PARTS = 5;
+const RISK_ORDER: RiskLevel[] = ['Low', 'Medium', 'High', 'Critical'];
+
+// Older saved settings may still point at retired 1.x/2.0 models.
+function resolveModel(name?: string): string {
+  if (!name || /gemini-(1\.|2\.0)/.test(name)) return DEFAULT_MODEL;
+  return name;
+}
+
 export async function generatePRSummary(
   parsedDiff: ParsedDiff,
   settings: AISettings
@@ -9,9 +21,14 @@ export async function generatePRSummary(
   // Try live Gemini API call if API key exists and offline mode isn't explicitly forced
   if (apiKey && apiKey.trim() !== '' && !useOfflineFallback) {
     try {
-      const summary = await fetchGeminiSummary(parsedDiff, apiKey, model, customPrompt);
-      if (summary) {
-        return summary;
+      const parts = splitDiffForAI(parsedDiff).slice(0, MAX_AI_PARTS);
+      const results = await Promise.all(
+        parts.map(part => fetchGeminiSummary(part, apiKey, model, customPrompt))
+      );
+      const valid = results.filter((r): r is PRSummary => r !== null);
+      if (valid.length > 0) {
+        const merged = valid.length === 1 ? valid[0] : mergeSummaries(valid, parsedDiff);
+        return { ...merged, source: 'ai' };
       }
     } catch (err: any) {
       console.warn('Gemini API call error:', err);
@@ -20,7 +37,85 @@ export async function generatePRSummary(
   }
 
   // Fallback heuristic engine
-  return generateHeuristicSummary(parsedDiff);
+  return { ...generateHeuristicSummary(parsedDiff), source: 'offline' };
+}
+
+/**
+ * Split a diff into groups of whole files that each fit in one AI request.
+ * A single file bigger than the limit becomes its own (truncated) part.
+ */
+export function splitDiffForAI(parsedDiff: ParsedDiff): ParsedDiff[] {
+  if (parsedDiff.rawText.length <= MAX_DIFF_CHARS) return [parsedDiff];
+
+  const fileTexts = parsedDiff.rawText.split(/(?=^diff --git )/m).filter(t => t.trim());
+  if (fileTexts.length !== parsedDiff.files.length) return [parsedDiff];
+
+  const parts: ParsedDiff[] = [];
+  let current: { text: string; files: ParsedDiff['files'] } = { text: '', files: [] };
+  const flush = () => {
+    if (!current.files.length) return;
+    parts.push({
+      files: current.files,
+      totalFiles: current.files.length,
+      totalAdditions: current.files.reduce((a, f) => a + f.additions, 0),
+      totalDeletions: current.files.reduce((a, f) => a + f.deletions, 0),
+      rawText: current.text
+    });
+    current = { text: '', files: [] };
+  };
+
+  fileTexts.forEach((text, i) => {
+    if (current.text.length + text.length > MAX_DIFF_CHARS) flush();
+    current.text += text;
+    current.files.push(parsedDiff.files[i]);
+  });
+  flush();
+  return parts;
+}
+
+function mergeSummaries(parts: PRSummary[], fullDiff: ParsedDiff): PRSummary {
+  const unique = <T,>(items: T[], key: (t: T) => string) => {
+    const seen = new Set<string>();
+    return items.filter(i => {
+      const k = key(i).toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  };
+  const first = parts[0];
+  const riskLevel = parts.reduce<RiskLevel>(
+    (max, p) => (RISK_ORDER.indexOf(p.riskLevel) > RISK_ORDER.indexOf(max) ? p.riskLevel : max),
+    'Low'
+  );
+  const maxOf = (k: keyof RiskBreakdown) => Math.max(...parts.map(p => p.riskBreakdown?.[k] ?? 0));
+  const summaryPoints = unique(parts.flatMap(p => p.summaryPoints), s => s);
+  const breakingChanges = unique(parts.flatMap(p => p.breakingChanges), s => s);
+  const suggestedTests = unique(parts.flatMap(p => p.suggestedTests), t => t.title)
+    .map((t, i) => ({ ...t, id: `t-${i}` }));
+  const securityNotes = unique(parts.flatMap(p => p.securityNotes ?? []), s => s);
+  const riskRationale = parts.find(p => p.riskLevel === riskLevel)?.riskRationale ?? first.riskRationale;
+  const totalDiffLines = fullDiff.totalAdditions + fullDiff.totalDeletions;
+
+  return {
+    ...first,
+    summaryPoints,
+    riskLevel,
+    riskRationale,
+    riskBreakdown: {
+      securityRisk: maxOf('securityRisk'),
+      apiBreakingRisk: maxOf('apiBreakingRisk'),
+      complexityRisk: maxOf('complexityRisk')
+    },
+    breakingChanges,
+    suggestedTests,
+    securityNotes,
+    complexityScore: totalDiffLines > 500 ? 'Chunky' : totalDiffLines > 250 ? 'Large' : totalDiffLines > 80 ? 'Medium' : 'Small',
+    estimatedReviewTime: `~${Math.max(1, Math.ceil(totalDiffLines / 40))} mins review`,
+    prDescriptionMarkdown: generatePRMarkdown(
+      first.title, summaryPoints, riskLevel, riskRationale, breakingChanges, suggestedTests, securityNotes
+    )
+  };
 }
 
 /**
@@ -30,7 +125,7 @@ export async function askAiAboutLine(
   lineContent: string,
   filePath: string,
   apiKey?: string,
-  modelName: string = 'gemini-1.5-flash'
+  modelName: string = DEFAULT_MODEL
 ): Promise<string> {
   if (!apiKey || !apiKey.trim()) {
     return `Line Analysis: Changes line in ${filePath}. Code snippet: "${lineContent.trim()}". (Configure Gemini API Key in header settings for deep AI code inspection).`;
@@ -44,11 +139,10 @@ Briefly explain (in 2 short sentences):
 2. Any potential bug, security risk, or performance implication to watch out for.`;
 
   try {
-    const targetModel = modelName.includes('2.0') ? 'gemini-2.0-flash' : 'gemini-1.5-flash';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey.trim()}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${resolveModel(modelName)}:generateContent`;
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }]
       })
@@ -64,7 +158,7 @@ Briefly explain (in 2 short sentences):
 async function fetchGeminiSummary(
   parsedDiff: ParsedDiff,
   apiKey: string,
-  modelName: string = 'gemini-1.5-flash',
+  modelName: string = DEFAULT_MODEL,
   customPrompt?: string
 ): Promise<PRSummary | null> {
   const prompt = `You are a senior lead engineer conducting a fast, high-signal PR code review.
@@ -119,15 +213,14 @@ GIT DIFF TO ANALYZE:
 Total Files: ${parsedDiff.totalFiles} (+${parsedDiff.totalAdditions} / -${parsedDiff.totalDeletions})
 
 Raw Diff Snippet:
-${parsedDiff.rawText.slice(0, 12000)}
+${parsedDiff.rawText.slice(0, MAX_DIFF_CHARS)}
 `;
 
-  const targetModel = modelName.includes('2.0') ? 'gemini-2.0-flash' : 'gemini-1.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey.trim()}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${resolveModel(modelName)}:generateContent`;
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
@@ -176,14 +269,24 @@ function generateHeuristicSummary(parsedDiff: ParsedDiff): PRSummary {
   let apiBreakingRisk = 10;
   let complexityRisk = Math.min(80, Math.floor(parsedDiff.totalAdditions / 2));
 
-  const diffText = parsedDiff.rawText.toLowerCase();
+  // Only look at added/removed lines so unchanged context doesn't trigger rules.
+  const diffText = parsedDiff.files
+    .flatMap(f => f.chunks.flatMap(c => c.lines.filter(l => l.type !== 'context').map(l => l.content)))
+    .join('\n')
+    .toLowerCase();
+  // Match at a word start so "auth" doesn't fire on e.g. "oauth". Symbols like "@post" match anywhere.
+  const has = (...words: string[]) =>
+    words.some(w => {
+      const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(/^\w/.test(w) ? `\\b${escaped}` : escaped).test(diffText);
+    });
 
   // 1. Analyze Auth & Password validation
-  if (diffText.includes('login') || diffText.includes('auth') || diffText.includes('password')) {
+  if (has('login', 'password', 'authenticat', 'authoriz') || /\bauth\b/.test(diffText)) {
     summaryPoints.push('Refactored authentication service');
     securityRisk += 40;
 
-    if (diffText.includes('validate') || diffText.includes('strength') || diffText.includes('bcrypt')) {
+    if (has('validate') || has('strength') || has('bcrypt')) {
       summaryPoints.push('Added password strength & credential validation');
       suggestedTests.push({
         id: 't-pass-invalid',
@@ -192,7 +295,7 @@ function generateHeuristicSummary(parsedDiff: ParsedDiff): PRSummary {
         description: 'Verify password rejecting passwords under 8 characters or missing special characters'
       });
     }
-    if (diffText.includes('token') || diffText.includes('expiresin') || diffText.includes('jwt')) {
+    if (has('token') || has('expiresin') || has('jwt')) {
       suggestedTests.push({
         id: 't-token-exp',
         category: 'Security',
@@ -200,7 +303,7 @@ function generateHeuristicSummary(parsedDiff: ParsedDiff): PRSummary {
         description: 'Verify behavior when authentication token expires or is malformed'
       });
     }
-    if (diffText.includes('rememberme') || diffText.includes('remember')) {
+    if (has('rememberme') || has('remember')) {
       suggestedTests.push({
         id: 't-remember-me',
         category: 'Integration',
@@ -211,16 +314,16 @@ function generateHeuristicSummary(parsedDiff: ParsedDiff): PRSummary {
   }
 
   // 2. Analyze API Endpoint Changes
-  if (diffText.includes('@post') || diffText.includes('@get') || diffText.includes('/v2/') || diffText.includes('endpoint')) {
+  if (has('@post') || has('@get') || has('/v2/') || has('endpoint')) {
     summaryPoints.push('Updated REST API endpoint contracts');
-    if (diffText.includes('/v2/') || diffText.includes('/v1/')) {
+    if (has('/v2/') || has('/v1/')) {
       breakingChanges.push('API endpoint version route updated (e.g. /v2/auth/login)');
       apiBreakingRisk += 60;
     }
   }
 
   // 3. Analyze Webhook & Signatures
-  if (diffText.includes('stripe') || diffText.includes('webhook') || diffText.includes('signature')) {
+  if (has('stripe') || has('webhook') || has('signature')) {
     summaryPoints.push('Added HMAC webhook signature verification and event handling');
     securityNotes.push('Ensure raw request body payload is preserved for cryptographic signature verification.');
     securityRisk += 60;
@@ -240,12 +343,12 @@ function generateHeuristicSummary(parsedDiff: ParsedDiff): PRSummary {
   }
 
   // 4. Analyze Database migrations & column changes
-  if (diffText.includes('alter table') || diffText.includes('drop column') || diffText.includes('migration')) {
+  if (has('alter table') || has('drop column') || has('migration')) {
     summaryPoints.push('Executed database schema migration');
     apiBreakingRisk += 70;
 
-    if (diffText.includes('drop column')) {
-      const match = diffText.match(/drop column\s+([a_z0-9_]+)/i);
+    if (has('drop column')) {
+      const match = diffText.match(/drop column\s+([a-z0-9_]+)/i);
       const colName = match ? match[1] : 'column';
       breakingChanges.push(`Dropped database column \`${colName}\`. Downstream dependencies must be updated.`);
     }
